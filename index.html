@@ -102,12 +102,12 @@
                 <div>
                     <div class="flex items-center justify-between text-xs font-semibold text-gray-400 px-2 mb-2">
                         <span>チャンネル</span>
-                        <button id="add-channel-btn" class="hover:text-white p-1"><i class="fa-solid fa-plus"></i></button>
+                        <button id="add-channel-btn" class="hover:text-white p-1" title="新しいチャンネルを作成"><i class="fa-solid fa-plus"></i></button>
                     </div>
                     <ul id="channel-list" class="space-y-0.5 text-sm"></ul>
                 </div>
             </div>
-            <div class="p-3 border-t border-slack-border/50 text-xs text-gray-500 text-center">Web Training Chat v1.5</div>
+            <div class="p-3 border-t border-slack-border/50 text-xs text-gray-500 text-center">Web Training Chat v1.6</div>
         </aside>
 
         <!-- 2. 中央メインチャットエリア -->
@@ -163,15 +163,16 @@
 
 <script>
     const DEFAULT_CHANNELS = [
-        { id: 'general', name: '雑談・質問', icon: '#' },
-        { id: 'js-study', name: 'JavaScript勉強会', icon: '#' },
-        { id: 'tasks', name: '課題・制作物共有', icon: '#' }
+        { id: 'general', name: '全体チャット', icon: '#', code: null },
+        { id: 'js-study', name: 'JavaScript勉強会', icon: '#', code: null },
+        { id: 'tasks', name: '課題・制作物共有', icon: '#', code: null }
     ];
 
     let state = {
         currentChannel: 'general',
         currentUser: localStorage.getItem('chat_user_name') || 'ユーザー' + Math.floor(Math.random() * 899 + 100),
         userAvatar: localStorage.getItem('chat_user_avatar') || null,
+        unlockedChannels: ['general', 'js-study', 'tasks'], // 認証済みチャンネルリスト
         messages: {},
         firebaseApp: null,
         db: null,
@@ -361,14 +362,36 @@
             }
         });
 
+        // チャンネル追加（通常 or 鍵付きクローズド）
         elements.addChannelBtn.addEventListener('click', () => {
-            const channelName = prompt('新しいチャンネル名:');
-            if (channelName) {
-                const id = 'channel-' + Date.now();
-                DEFAULT_CHANNELS.push({ id, name: channelName.trim(), icon: '#' });
-                renderSidebar();
-                switchChannel(id, channelName.trim(), '#');
+            const channelName = prompt('新しいチャンネル名を入力してください:');
+            if (!channelName) return;
+
+            const isPrivate = confirm('このチャンネルを【鍵付き（クローズド）】にしますか？\n（キャンセルを押すと全員が参加できる通常チャンネルになります）');
+            
+            let passCode = null;
+            if (isPrivate) {
+                passCode = prompt('参加に必要な【参加コード（パスコード）】を設定してください:');
+                if (!passCode) {
+                    alert('参加コードが設定されなかったため作成をキャンセルしました。');
+                    return;
+                }
             }
+
+            const id = 'channel-' + Date.now();
+            const newChannel = {
+                id: id,
+                name: channelName.trim(),
+                icon: isPrivate ? '🔒' : '#',
+                code: passCode ? passCode.trim() : null
+            };
+
+            DEFAULT_CHANNELS.push(newChannel);
+            // 作成者は自動的にアンロック状態にする
+            state.unlockedChannels.push(id);
+
+            renderSidebar();
+            switchChannel(id, newChannel.name, newChannel.icon, newChannel.code);
         });
     }
 
@@ -378,18 +401,40 @@
     }
 
     function renderSidebar() {
-        elements.channelList.innerHTML = DEFAULT_CHANNELS.map(ch => `
-            <li>
-                <button onclick="switchChannel('${ch.id}', '${ch.name}', '${ch.icon}')" 
-                    class="w-full text-left px-2 py-1.5 rounded flex items-center gap-2 transition-colors ${state.currentChannel === ch.id ? 'bg-slack-sidebarActive text-white font-medium' : 'text-gray-400 hover:bg-slack-sidebarHover hover:text-gray-200'}">
-                    <span class="text-gray-500 font-bold">${ch.icon}</span>
-                    <span class="truncate">${ch.name}</span>
-                </button>
-            </li>
-        `).join('');
+        elements.channelList.innerHTML = DEFAULT_CHANNELS.map(ch => {
+            const isLocked = ch.code && !state.unlockedChannels.includes(ch.id);
+            return `
+                <li>
+                    <button onclick="handleChannelClick('${ch.id}', '${ch.name}', '${ch.icon}', '${ch.code || ''}')" 
+                        class="w-full text-left px-2 py-1.5 rounded flex items-center gap-2 transition-colors ${state.currentChannel === ch.id ? 'bg-slack-sidebarActive text-white font-medium' : 'text-gray-400 hover:bg-slack-sidebarHover hover:text-gray-200'}">
+                        <span class="text-xs ${isLocked ? 'text-yellow-500' : 'text-gray-500'} font-bold">${ch.icon}</span>
+                        <span class="truncate">${ch.name}</span>
+                        ${isLocked ? '<i class="fa-solid fa-lock text-[10px] ml-auto text-yellow-500/80"></i>' : ''}
+                    </button>
+                </li>
+            `;
+        }).join('');
     }
 
-    function switchChannel(id, name, icon) {
+    function handleChannelClick(id, name, icon, code) {
+        // パスコード制限チェック
+        if (code && code !== 'null' && code !== '' && !state.unlockedChannels.includes(id)) {
+            const inputCode = prompt(`「${name}」は鍵付きチャンネルです。\n参加コードを入力してください:`);
+            if (inputCode === code) {
+                alert('認証に成功しました！');
+                state.unlockedChannels.push(id);
+                renderSidebar();
+                switchChannel(id, name, icon, code);
+            } else if (inputCode !== null) {
+                alert('参加コードが違います。');
+            }
+            return;
+        }
+
+        switchChannel(id, name, icon, code);
+    }
+
+    function switchChannel(id, name, icon, code) {
         state.currentChannel = id;
         elements.currentChannelTitle.textContent = name;
         elements.currentChannelIcon.textContent = icon;
@@ -429,7 +474,6 @@
                         ${msg.code ? `<pre class="mt-2 p-2 bg-gray-950 text-emerald-400 font-mono text-xs rounded border border-gray-800 overflow-x-auto"><code>${escapeHtml(msg.code)}</code></pre>` : ''}
                     </div>
                     
-                    <!-- 削除ボタン（メッセージの上にマウスを載せると表示） -->
                     <button onclick="deleteMessage('${msg.id}')" class="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-gray-400 hover:text-red-400 hover:bg-slack-card rounded absolute right-2 top-2" title="メッセージを削除">
                         <i class="fa-regular fa-trash-can text-xs"></i>
                     </button>
@@ -465,7 +509,6 @@
         elements.codeInputContainer.classList.add('hidden');
     }
 
-    // 単体メッセージ削除関数
     function deleteMessage(msgId) {
         if (!msgId) return;
         if (confirm('このメッセージを削除しますか？')) {
