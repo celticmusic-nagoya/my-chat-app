@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="ja" class="h-full bg-gray-900 text-gray-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Slack Style Chat App</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Firebase SDK (v9 Moduler compat) -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        slack: {
+                            sidebar: '#19171D',
+                            sidebarHover: '#27242C',
+                            sidebarActive: '#1164A3',
+                            bg: '#1A1D21',
+                            card: '#222529',
+                            border: '#383B40',
+                            accent: '#007a5a',
+                            accentHover: '#148567'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* スクロールバーのカスタマイズ */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        /* モバイル画面での高さ崩れ防止 */
+        .app-height {
+            height: 100vh;
+            height: 100dvh;
+        }
+    </style>
+</head>
+<body class="h-full overflow-hidden antialiased select-none font-sans bg-slack-bg text-gray-200">
+
+<div id="app" class="flex flex-col app-height w-full overflow-hidden">
+
+    <!-- ================= 画面ヘッダー ================= -->
+    <header class="h-13 bg-slack-sidebar border-b border-slack-border flex items-center justify-between px-3 md:px-4 shrink-0 z-20">
+        <!-- 左: モバイル用メニューボタン & チャンネル名 -->
+        <div class="flex items-center gap-2 md:gap-3">
+            <button id="mobile-menu-btn" class="md:hidden p-2 text-gray-300 hover:text-white rounded hover:bg-slack-sidebarHover">
+                <i class="fa-solid fa-bars text-lg"></i>
+            </button>
+            <div class="flex items-center gap-2">
+                <span id="current-channel-icon" class="text-gray-400 text-lg">#</span>
+                <h1 id="current-channel-title" class="font-bold text-white text-base md:text-lg truncate max-w-[150px] sm:max-w-[250px]">雑談・質問</h1>
+            </div>
+            <span id="demo-badge" class="hidden sm:inline-block text-[10px] bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-2 py-0.5 rounded-full font-mono">デモモード (ローカル)</span>
+        </div>
+
+        <!-- 右: 発言ユーザー切替 & 通信設定ボタン -->
+        <div class="flex items-center gap-2">
+            <!-- ユーザー切替ドロップダウン -->
+            <div class="flex items-center gap-1.5 bg-slack-card border border-slack-border rounded-lg px-2 py-1">
+                <i class="fa-solid fa-user-circle text-slack-sidebarActive text-sm"></i>
+                <select id="user-select" class="bg-transparent text-xs md:text-sm text-gray-200 focus:outline-none cursor-pointer">
+                    <option value="佐藤 たかし" class="bg-slack-card text-white">佐藤 たかし</option>
+                    <option value="田中 講師" class="bg-slack-card text-white">田中 講師</option>
+                    <option value="鈴木 あい" class="bg-slack-card text-white">鈴木 あい</option>
+                    <option value="高橋 ケン" class="bg-slack-card text-white">高橋 ケン</option>
+                </select>
+            </div>
+
+            <!-- 右パネル開閉ボタン -->
+            <button id="toggle-info-btn" class="p-2 text-gray-400 hover:text-white rounded hover:bg-slack-sidebarHover hidden sm:block">
+                <i class="fa-regular fa-circle-question text-lg"></i>
+            </button>
+
+            <!-- 通信設定ボタン -->
+            <button id="open-config-btn" class="p-2 text-gray-300 hover:text-white rounded hover:bg-slack-sidebarHover relative" title="Firebase通信設定">
+                <i class="fa-solid fa-gear text-lg"></i>
+                <span id="status-indicator" class="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-yellow-500 border-2 border-slack-sidebar"></span>
+            </button>
+        </div>
+    </header>
+
+    <!-- ================= メインコンテンツエリア ================= -->
+    <div class="flex-1 flex overflow-hidden relative">
+
+        <!-- バックドロップ (モバイル用) -->
+        <div id="mobile-backdrop" class="fixed inset-0 bg-black/60 z-30 hidden md:hidden transition-opacity"></div>
+
+        <!-- 1. 左サイドバー (チャンネル・DM一覧) -->
+        <aside id="sidebar" class="absolute md:relative z-40 w-64 h-full bg-slack-sidebar border-r border-slack-border flex flex-col transition-transform duration-300 -translate-x-full md:translate-x-0 shrink-0">
+            <!-- ワークスペース情報 -->
+            <div class="p-4 border-b border-slack-border/50 flex items-center justify-between">
+                <div>
+                    <h2 class="font-bold text-white text-base truncate">WEB訓練校 自習室</h2>
+                    <p class="text-xs text-gray-400 flex items-center gap-1.5 mt-0.5">
+                        <span id="connection-status-text" class="inline-block w-2 h-2 rounded-full bg-yellow-500"></span>
+                        <span id="connection-status-label">未設定 (ローカル保存)</span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- ナビゲーションリスト -->
+            <div class="flex-1 overflow-y-auto p-3 space-y-6">
+                <!-- チャンネルリスト -->
+                <div>
+                    <div class="flex items-center justify-between text-xs font-semibold text-gray-400 px-2 mb-2">
+                        <span>チャンネル</span>
+                        <button id="add-channel-btn" class="hover:text-white p-1"><i class="fa-solid fa-plus"></i></button>
+                    </div>
+                    <ul id="channel-list" class="space-y-0.5 text-sm">
+                        <!-- JSで動的生成 -->
+                    </ul>
+                </div>
+
+                <!-- ダイレクトメッセージ -->
+                <div>
+                    <div class="flex items-center justify-between text-xs font-semibold text-gray-400 px-2 mb-2">
+                        <span>ダイレクトメッセージ</span>
+                    </div>
+                    <ul id="dm-list" class="space-y-0.5 text-sm">
+                        <!-- JSで動的生成 -->
+                    </ul>
+                </div>
+            </div>
+
+            <!-- アプリ情報フッター -->
+            <div class="p-3 border-t border-slack-border/50 text-xs text-gray-500 text-center">
+                Web Training Chat v1.2
+            </div>
+        </aside>
+
+        <!-- 2. 中央メインチャットエリア -->
+        <main class="flex-1 flex flex-col bg-slack-bg h-full min-w-0 relative">
+            
+            <!-- メッセージ表示領域 -->
+            <div id="messages-container" class="flex-1 overflow-y-auto p-4 space-y-4">
+                <!-- JSでメッセージを描画 -->
+            </div>
+
+            <!-- 入力フォームエリア -->
+            <div class="p-3 md:p-4 bg-slack-bg border-t border-slack-border/60 shrink-0">
+                <form id="message-form" class="bg-slack-card border border-slack-border rounded-lg p-2 focus-within:border-gray-500 transition-colors">
+                    
+                    <!-- コード入力フィールド (デフォルト非表示) -->
+                    <div id="code-input-container" class="hidden mb-2">
+                        <div class="flex items-center justify-between text-xs text-gray-400 mb-1 px-1">
+                            <span><i class="fa-solid fa-code mr-1"></i> コードスニペットを送信</span>
+                            <button type="button" id="close-code-btn" class="hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                        <textarea id="code-input" rows="3" class="w-full bg-gray-950 text-emerald-400 font-mono text-xs p-2 rounded border border-gray-800 focus:outline-none resize-none" placeholder="// ここにHTML/CSS/JavaScriptなどのコードを貼り付け"></textarea>
+                    </div>
+
+                    <!-- 通常テキスト入力 -->
+                    <textarea id="message-input" rows="2" class="w-full bg-transparent text-gray-100 text-sm focus:outline-none resize-none px-1 placeholder-gray-500" placeholder="メッセージを送信... (Enterで送信, Shift+Enterで改行)"></textarea>
+
+                    <!-- 入力ツールバー & 送信ボタン -->
+                    <div class="flex items-center justify-between pt-2 border-t border-slack-border/40 mt-1">
+                        <div class="flex items-center gap-1 text-gray-400">
+                            <button type="button" id="toggle-code-btn" class="p-1.5 hover:text-white hover:bg-slack-sidebarHover rounded text-xs flex items-center gap-1" title="コード入力を切り替え">
+                                <i class="fa-solid fa-code text-sm"></i>
+                                <span class="text-[11px] hidden sm:inline">コード</span>
+                            </button>
+                            <button type="button" id="emoji-quick-btn" class="p-1.5 hover:text-white hover:bg-slack-sidebarHover rounded text-xs" title="絵文字挿入">
+                                <i class="fa-regular fa-face-smile text-sm"></i>
+                            </button>
+                        </div>
+
+                        <button type="submit" class="bg-slack-accent hover:bg-slack-accentHover text-white px-3 py-1.5 rounded text-xs font-medium flex items-center gap-1.5 transition-colors">
+                            <span>送信</span>
+                            <i class="fa-solid fa-paper-plane text-[10px]"></i>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </main>
+
+        <!-- 3. 右スレッド / 詳細パネル (トグル表示) -->
+        <aside id="info-panel" class="w-80 h-full bg-slack-sidebar border-l border-slack-border flex-col hidden xl:flex shrink-0">
+            <div class="p-4 border-b border-slack-border flex items-center justify-between">
+                <h3 class="font-bold text-white text-sm">チャンネル概要・自習メモ</h3>
+                <button id="close-info-btn" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="p-4 space-y-4 overflow-y-auto text-xs text-gray-300">
+                <div class="bg-slack-card p-3 rounded-lg border border-slack-border">
+                    <h4 class="font-semibold text-white mb-1"><i class="fa-solid fa-bullhorn text-yellow-500 mr-1"></i> 自習時間のお役立ち機能</h4>
+                    <ul class="list-disc list-inside space-y-1 text-gray-400 mt-2">
+                        <li>左下の <code class="text-emerald-400 bg-gray-900 px-1 rounded">&lt;/&gt;</code> ボタンでソースコードを整形して送信可能。</li>
+                        <li>右上のドロップダウンで「発言ユーザー」を自由に切り替えられます。</li>
+                        <li>各メッセージにカーソルを合わせると絵文字でリアクション可能。</li>
+                    </ul>
+                </div>
+
+                <div class="bg-slack-card p-3 rounded-lg border border-slack-border">
+                    <h4 class="font-semibold text-white mb-2"><i class="fa-solid fa-users text-blue-400 mr-1"></i> オンラインメンバー (4)</h4>
+                    <ul class="space-y-2">
+                        <li class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> 佐藤 たかし (受講生)</li>
+                        <li class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> 田中 講師</li>
+                        <li class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> 鈴木 あい (受講生)</li>
+                        <li class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-gray-500"></span> 高橋 ケン (離席中)</li>
+                    </ul>
+                </div>
+            </div>
+        </aside>
+
+    </div>
+</div>
+
+<!-- ================= 通信設定 モーダル ================= -->
+<div id="config-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slack-card border border-slack-border rounded-xl max-w-lg w-full p-5 shadow-2xl space-y-4">
+        <div class="flex items-center justify-between border-b border-slack-border pb-3">
+            <h3 class="font-bold text-white text-base flex items-center gap-2">
+                <i class="fa-solid fa-bolt text-yellow-400"></i>
+                Firebaseリアルタイム通信設定
+            </h3>
+            <button id="close-config-modal-btn" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+        </div>
+
+        <p class="text-xs text-gray-300 leading-relaxed">
+            全員のスマホ・PC間でリアルタイムで会話を行うには、Firebaseの <code class="text-emerald-400">firebaseConfig</code> を以下に貼り付けてください。未設定の場合はローカル環境（デモモード）として動きます。
+        </p>
+
+        <div>
+            <label class="block text-xs font-semibold text-gray-400 mb-1">firebaseConfig (JavaScriptオブジェクトまたはJSON)</label>
+            <textarea id="firebase-config-input" rows="6" class="w-full bg-gray-950 text-emerald-400 font-mono text-xs p-3 rounded-lg border border-gray-800 focus:outline-none focus:border-slack-sidebarActive resize-none" placeholder='const firebaseConfig = {
+  apiKey: "AIzaSy...",
+  authDomain: "your-app.firebaseapp.com",
+  databaseURL: "https://your-app-default-rtdb.firebaseio.com",
+  projectId: "your-app",
+  storageBucket: "your-app.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abc123"
+};'></textarea>
+        </div>
+
+        <div class="flex items-center justify-between pt-2">
+            <button id="clear-config-btn" type="button" class="text-xs text-red-400 hover:text-red-300 underline">設定をクリア (デモに戻す)</button>
+            <div class="flex gap-2">
+                <button id="save-config-btn" type="button" class="bg-slack-accent hover:bg-slack-accentHover text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors">
+                    設定を保存して接続
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ================= アプリケーションロジック (JavaScript) ================= -->
+<script>
+    // --- 初期データ構造 ---
+    const DEFAULT_CHANNELS = [
+        { id: 'general', name: '雑談・質問', icon: '#' },
+        { id: 'js-study', name: 'JavaScript勉強会', icon: '#' },
+        { id: 'tasks', name: '課題・制作物共有', icon: '#' }
+    ];
+
+    const DEFAULT_DMS = [
+        { id: 'dm-tanaka', name: '田中 講師', role: 'メンター' },
+        { id: 'dm-suzuki', name: '鈴木 あい', role: '受講生' }
+    ];
+
+    const INITIAL_MESSAGES = {
+        'general': [
+            {
+                id: 'm1',
+                user: '田中 講師',
+                avatar: '👨‍🏫',
+                text: 'みなさん自習お疲れ様です！質問やエラーで詰まったところがあれば気軽にこのチャンネルにコードを張ってくださいね。',
+                timestamp: '13:00',
+                reactions: { '👍': ['佐藤 たかし', '鈴木 あい'], '🚀': ['佐藤 たかし'] }
+            },
+            {
+                id: 'm2',
+                user: '佐藤 たかし',
+                avatar: '👨‍💻',
+                text: 'ありがとうございます！JavaScriptのArray.map()の使い方が少し怪しいので勉強しています。',
+                timestamp: '13:05',
+                code: 'const numbers = [1, 2, 3];\nconst doubled = numbers.map(num => num * 2);\nconsole.log(doubled); // [2, 4, 6]',
+                reactions: { '💡': ['田中 講師'] }
+            }
+        ]
+    };
+
+    // --- アプリケーション状態 ---
+    let state = {
+        currentChannel: 'general',
+        currentUser: '佐藤 たかし',
+        userAvatars: {
+            '佐藤 たかし': '👨‍💻',
+            '田中 講師': '👨‍🏫',
+            '鈴木 あい': '👩‍💻',
+            '高橋 ケン': '🧔'
+        },
+        messages: JSON.parse(localStorage.getItem('slack_demo_messages')) || INITIAL_MESSAGES,
+        firebaseApp: null,
+        db: null,
+        isFirebaseActive: false
+    };
+
+    // --- DOM要素の参照 ---
+    const elements = {
+        channelList: document.getElementById('channel-list'),
+        dmList: document.getElementById('dm-list'),
+        messagesContainer: document.getElementById('messages-container'),
+        messageForm: document.getElementById('message-form'),
+        messageInput: document.getElementById('message-input'),
+        codeInput: document.getElementById('code-input'),
+        codeInputContainer: document.getElementById('code-input-container'),
+        toggleCodeBtn: document.getElementById('toggle-code-btn'),
+        closeCodeBtn: document.getElementById('close-code-btn'),
+        userSelect: document.getElementById('user-select'),
+        currentChannelTitle: document.getElementById('current-channel-title'),
+        currentChannelIcon: document.getElementById('current-channel-icon'),
+        sidebar: document.getElementById('sidebar'),
+        mobileMenuBtn: document.getElementById('mobile-menu-btn'),
+        mobileBackdrop: document.getElementById('mobile-backdrop'),
+        configModal: document.getElementById('config-modal'),
+        openConfigBtn: document.getElementById('open-config-btn'),
+        closeConfigModalBtn: document.getElementById('close-config-modal-btn'),
+        saveConfigBtn: document.getElementById('save-config-btn'),
+        clearConfigBtn: document.getElementById('clear-config-btn'),
+        firebaseConfigInput: document.getElementById('firebase-config-input'),
+        statusIndicator: document.getElementById('status-indicator'),
+        connectionStatusText: document.getElementById('connection-status-text'),
+        connectionStatusLabel: document.getElementById('connection-status-label'),
+        demoBadge: document.getElementById('demo-badge'),
+        addChannelBtn: document.getElementById('add-channel-btn')
+    };
+
+    // --- 初期化処理 ---
+    function init() {
+        setupEventListeners();
+        renderSidebar();
+        initFirebaseFromStorage();
+        renderMessages();
+    }
+
+    // --- Firebase初期化 ---
+    function initFirebaseFromStorage() {
+        const savedConfig = localStorage.getItem('firebase_config');
+        if (savedConfig) {
+            try {
+                const configObj = parseFirebaseConfig(savedConfig);
+                if (configObj && configObj.apiKey) {
+                    if (!firebase.apps.length) {
+                        state.firebaseApp = firebase.initializeApp(configObj);
+                    } else {
+                        state.firebaseApp = firebase.app();
+                    }
+                    state.db = firebase.database();
+                    state.isFirebaseActive = true;
+                    updateConnectionUI(true);
+                    listenToFirebaseMessages();
+                    return;
+                }
+            } catch (err) {
+                console.error("Firebase Initialization Error:", err);
+            }
+        }
+        state.isFirebaseActive = false;
+        updateConnectionUI(false);
+    }
+
+    // 設定テキストをオブジェクトにパース
+    function parseFirebaseConfig(str) {
+        try {
+            return JSON.parse(str);
+        } catch (e) {
+            // JSオブジェクト構文の直接貼り付けに対応
+            const cleanStr = str
+                .replace(/const\s+firebaseConfig\s*=\s*/, '')
+                .replace(/;\s*$/, '')
+                .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":')
+                .replace(/'/g, '"');
+            return JSON.parse(cleanStr);
+        }
+    }
+
+    // 接続状態UI更新
+    function updateConnectionUI(isConnected) {
+        if (isConnected) {
+            elements.statusIndicator.className = "absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-slack-sidebar";
+            elements.connectionStatusText.className = "inline-block w-2 h-2 rounded-full bg-emerald-500";
+            elements.connectionStatusLabel.textContent = "Firebase接続完了";
+            elements.demoBadge.classList.add('hidden');
+        } else {
+            elements.statusIndicator.className = "absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-yellow-500 border-2 border-slack-sidebar";
+            elements.connectionStatusText.className = "inline-block w-2 h-2 rounded-full bg-yellow-500";
+            elements.connectionStatusLabel.textContent = "未設定 (ローカル保存)";
+            elements.demoBadge.classList.remove('hidden');
+        }
+    }
+
+    // Firebaseリアルタイムリスナー
+    function listenToFirebaseMessages() {
+        if (!state.db) return;
+        const ref = state.db.ref(`messages/${state.currentChannel}`);
+        ref.on('value', (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                state.messages[state.currentChannel] = Object.keys(data).map(key => ({
+                    id: key,
+                    ...data[key]
+                }));
+            } else {
+                state.messages[state.currentChannel] = [];
+            }
+            renderMessages();
+        });
+    }
+
+    // --- イベントリスナー設定 ---
+    function setupEventListeners() {
+        // ユーザー切り替え
+        elements.userSelect.addEventListener('change', (e) => {
+            state.currentUser = e.target.value;
+        });
+
+        // コード入力のトグル
+        elements.toggleCodeBtn.addEventListener('click', () => {
+            elements.codeInputContainer.classList.toggle('hidden');
+            if (!elements.codeInputContainer.classList.contains('hidden')) {
+                elements.codeInput.focus();
+            }
+        });
+
+        elements.closeCodeBtn.addEventListener('click', () => {
+            elements.codeInputContainer.classList.add('hidden');
+        });
+
+        // モバイルサイドバー開閉
+        elements.mobileMenuBtn.addEventListener('click', toggleMobileSidebar);
+        elements.mobileBackdrop.addEventListener('click', toggleMobileSidebar);
+
+        // 通信設定モーダル
+        elements.openConfigBtn.addEventListener('click', () => {
+            elements.firebaseConfigInput.value = localStorage.getItem('firebase_config') || '';
+            elements.configModal.classList.remove('hidden');
+        });
+
+        elements.closeConfigModalBtn.addEventListener('click', () => {
+            elements.configModal.classList.add('hidden');
+        });
+
+        elements.saveConfigBtn.addEventListener('click', () => {
+            const val = elements.firebaseConfigInput.value.trim();
+            if (val) {
+                try {
+                    parseFirebaseConfig(val);
+                    localStorage.setItem('firebase_config', val);
+                    location.reload();
+                } catch (err) {
+                    alert('設定コードの形式が正しくありません。Firebase Consoleから正しい記述をコピーしてください。');
+                }
+            }
+        });
+
+        elements.clearConfigBtn.addEventListener('click', () => {
+            if (confirm('Firebase接続設定を削除してローカル（デモモード）に戻しますか？')) {
+                localStorage.removeItem('firebase_config');
+                location.reload();
+            }
+        });
+
+        // メッセージ送信フォーム
+        elements.messageForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            sendMessage();
+        });
+
+        // Enterキーで送信 (Shift+Enterで改行)
+        elements.messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // チャンネル追加
+        elements.addChannelBtn.addEventListener('click', () => {
+            const channelName = prompt('新しいチャンネル名を入力してください:');
+            if (channelName) {
+                const id = 'channel-' + Date.now();
+                DEFAULT_CHANNELS.push({ id, name: channelName.trim(), icon: '#' });
+                renderSidebar();
+                switchChannel(id, channelName.trim(), '#');
+            }
+        });
+    }
+
+    function toggleMobileSidebar() {
+        elements.sidebar.classList.toggle('-translate-x-full');
+        elements.mobileBackdrop.classList.toggle('hidden');
+    }
+
+    // --- レンダリング系 ---
+
+    // サイドバーのチャンネル & DM一覧を描画
+    function renderSidebar() {
+        elements.channelList.innerHTML = DEFAULT_CHANNELS.map(ch => `
+            <li>
+                <button onclick="switchChannel('${ch.id}', '${ch.name}', '${ch.icon}')" 
+                    class="w-full text-left px-2 py-1.5 rounded flex items-center gap-2 transition-colors ${state.currentChannel === ch.id ? 'bg-slack-sidebarActive text-white font-medium' : 'text-gray-400 hover:bg-slack-sidebarHover hover:text-gray-200'}">
+                    <span class="text-gray-500 font-bold">${ch.icon}</span>
+                    <span class="truncate">${ch.name}</span>
+                </button>
+            </li>
+        `).join('');
+
+        elements.dmList.innerHTML = DEFAULT_DMS.map(dm => `
+            <li>
+                <button onclick="switchChannel('${dm.id}', '${dm.name}', '💬')" 
+                    class="w-full text-left px-2 py-1.5 rounded flex items-center gap-2 transition-colors ${state.currentChannel === dm.id ? 'bg-slack-sidebarActive text-white font-medium' : 'text-gray-400 hover:bg-slack-sidebarHover hover:text-gray-200'}">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    <span class="truncate">${dm.name}</span>
+                </button>
+            </li>
+        `).join('');
+    }
+
+    // チャンネル切り替え
+    function switchChannel(id, name, icon) {
+        state.currentChannel = id;
+        elements.currentChannelTitle.textContent = name;
+        elements.currentChannelIcon.textContent = icon;
+        renderSidebar();
+
+        // モバイルでサイドバーを閉じる
+        if (!elements.sidebar.classList.contains('-translate-x-full')) {
+            toggleMobileSidebar();
+        }
+
+        if (state.isFirebaseActive) {
+            listenToFirebaseMessages();
+        } else {
+            renderMessages();
+        }
+    }
+
+    // メッセージリストの描画
+    function renderMessages() {
+        const currentMsgs = state.messages[state.currentChannel] || [];
+        
+        if (currentMsgs.length === 0) {
+            elements.messagesContainer.innerHTML = `
+                <div class="h-full flex flex-col items-center justify-center text-gray-500 space-y-2">
+                    <i class="fa-regular fa-comments text-4xl"></i>
+                    <p class="text-sm">まだメッセージがありません。会話を始めましょう！</p>
+                </div>
+            `;
+            return;
+        }
+
+        elements.messagesContainer.innerHTML = currentMsgs.map(msg => {
+            const avatar = state.userAvatars[msg.user] || '👤';
+            const reactionsHtml = msg.reactions ? Object.entries(msg.reactions).map(([emoji, users]) => `
+                <button onclick="toggleReaction('${msg.id}', '${emoji}')" 
+                    class="inline-flex items-center gap-1 bg-slack-card border border-slack-border px-2 py-0.5 rounded-full text-xs text-gray-300 hover:border-gray-500 ${users.includes(state.currentUser) ? 'border-slack-sidebarActive bg-slack-sidebarActive/10 text-blue-400' : ''}">
+                    <span>${emoji}</span>
+                    <span class="font-mono text-[10px]">${users.length}</span>
+                </button>
+            `).join('') : '';
+
+            return `
+                <div class="group flex gap-3 hover:bg-slack-sidebarHover/40 -mx-4 px-4 py-1.5 rounded transition-colors relative">
+                    <!-- アバター -->
+                    <div class="w-9 h-9 rounded bg-slack-card border border-slack-border flex items-center justify-center text-lg shrink-0 select-none">
+                        ${avatar}
+                    </div>
+
+                    <!-- 本文 -->
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-baseline gap-2">
+                            <span class="font-bold text-white text-sm truncate">${escapeHtml(msg.user)}</span>
+                            <span class="text-[10px] text-gray-500">${msg.timestamp || 'たった今'}</span>
+                        </div>
+
+                        ${msg.text ? `<p class="text-sm text-gray-200 mt-0.5 whitespace-pre-wrap leading-relaxed">${escapeHtml(msg.text)}</p>` : ''}
+
+                        ${msg.code ? `
+                            <div class="mt-2 rounded-lg bg-gray-950 border border-gray-800 overflow-hidden">
+                                <div class="bg-gray-900 px-3 py-1 text-[10px] text-gray-400 font-mono border-b border-gray-800 flex justify-between">
+                                    <span>CODE</span>
+                                    <button onclick="navigator.clipboard.writeText(\`${escapeJsString(msg.code)}\`)" class="hover:text-white"><i class="fa-regular fa-copy"></i> コピー</button>
+                                </div>
+                                <pre class="p-3 text-xs font-mono text-emerald-400 overflow-x-auto"><code>${escapeHtml(msg.code)}</code></pre>
+                            </div>
+                        ` : ''}
+
+                        <!-- リアクション表示 -->
+                        <div class="flex flex-wrap gap-1 mt-1.5">
+                            ${reactionsHtml}
+                        </div>
+                    </div>
+
+                    <!-- ホバーアクションバー (リアクションボタン) -->
+                    <div class="absolute right-4 -top-3 hidden group-hover:flex items-center bg-slack-card border border-slack-border rounded-lg shadow-lg px-1 py-0.5 gap-1 z-10">
+                        <button onclick="toggleReaction('${msg.id}', '👍')" class="p-1 hover:bg-slack-sidebarHover rounded text-xs" title="Good">👍</button>
+                        <button onclick="toggleReaction('${msg.id}', '❤️')" class="p-1 hover:bg-slack-sidebarHover rounded text-xs" title="Heart">❤️</button>
+                        <button onclick="toggleReaction('${msg.id}', '🚀')" class="p-1 hover:bg-slack-sidebarHover rounded text-xs" title="Rocket">🚀</button>
+                        <button onclick="toggleReaction('${msg.id}', '💡')" class="p-1 hover:bg-slack-sidebarHover rounded text-xs" title="Idea">💡</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // 自動最下部スクロール
+        elements.messagesContainer.scrollTop = elements.messagesContainer.scrollHeight;
+    }
+
+    // --- メッセージ送信 ---
+    function sendMessage() {
+        const text = elements.messageInput.value.trim();
+        const code = elements.codeInput.value.trim();
+
+        if (!text && !code) return;
+
+        const now = new Date();
+        const timeStr = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+        const newMsg = {
+            user: state.currentUser,
+            text: text,
+            code: code || null,
+            timestamp: timeStr,
+            reactions: {}
+        };
+
+        if (state.isFirebaseActive && state.db) {
+            // Firebase送信
+            state.db.ref(`messages/${state.currentChannel}`).push(newMsg);
+        } else {
+            // ローカル保存 (デモモード)
+            if (!state.messages[state.currentChannel]) {
+                state.messages[state.currentChannel] = [];
+            }
+            newMsg.id = 'msg-' + Date.now();
+            state.messages[state.currentChannel].push(newMsg);
+            localStorage.setItem('slack_demo_messages', JSON.stringify(state.messages));
+            renderMessages();
+        }
+
+        // 入力欄クリア
+        elements.messageInput.value = '';
+        elements.codeInput.value = '';
+        elements.codeInputContainer.classList.add('hidden');
+    }
+
+    // --- リアクション追加/解除 ---
+    function toggleReaction(msgId, emoji) {
+        if (state.isFirebaseActive && state.db) {
+            const msgRef = state.db.ref(`messages/${state.currentChannel}/${msgId}`);
+            msgRef.transaction(msg => {
+                if (msg) {
+                    if (!msg.reactions) msg.reactions = {};
+                    if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
+                    
+                    const userIdx = msg.reactions[emoji].indexOf(state.currentUser);
+                    if (userIdx > -1) {
+                        msg.reactions[emoji].splice(userIdx, 1);
+                        if (msg.reactions[emoji].length === 0) delete msg.reactions[emoji];
+                    } else {
+                        msg.reactions[emoji].push(state.currentUser);
+                    }
+                }
+                return msg;
+            });
+        } else {
+            // ローカル
+            const msgs = state.messages[state.currentChannel] || [];
+            const msg = msgs.find(m => m.id === msgId);
+            if (msg) {
+                if (!msg.reactions) msg.reactions = {};
+                if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
+
+                const userIdx = msg.reactions[emoji].indexOf(state.currentUser);
+                if (userIdx > -1) {
+                    msg.reactions[emoji].splice(userIdx, 1);
+                    if (msg.reactions[emoji].length === 0) delete msg.reactions[emoji];
+                } else {
+                    msg.reactions[emoji].push(state.currentUser);
+                }
+                localStorage.setItem('slack_demo_messages', JSON.stringify(state.messages));
+                renderMessages();
+            }
+        }
+    }
+
+    // ユーティリティ
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function escapeJsString(str) {
+        if (!str) return '';
+        return str.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+    }
+
+    // アプリ起動
+    document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
