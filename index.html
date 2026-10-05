@@ -53,7 +53,7 @@
             </button>
             <div class="flex items-center gap-2">
                 <span id="current-channel-icon" class="text-gray-400 text-lg">#</span>
-                <h1 id="current-channel-title" class="font-bold text-white text-base md:text-lg truncate max-w-[150px] sm:max-w-[250px]">雑談・質問</h1>
+                <h1 id="current-channel-title" class="font-bold text-white text-base md:text-lg truncate max-w-[150px] sm:max-w-[250px]">全体チャット</h1>
             </div>
             <span id="demo-badge" class="hidden sm:inline-block text-[10px] bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-2 py-0.5 rounded-full font-mono">デモモード</span>
         </div>
@@ -107,7 +107,7 @@
                     <ul id="channel-list" class="space-y-0.5 text-sm"></ul>
                 </div>
             </div>
-            <div class="p-3 border-t border-slack-border/50 text-xs text-gray-500 text-center">Web Training Chat v1.6</div>
+            <div class="p-3 border-t border-slack-border/50 text-xs text-gray-500 text-center">Web Training Chat v1.7</div>
         </aside>
 
         <!-- 2. 中央メインチャットエリア -->
@@ -162,7 +162,7 @@
 </div>
 
 <script>
-    const DEFAULT_CHANNELS = [
+    let DEFAULT_CHANNELS = [
         { id: 'general', name: '全体チャット', icon: '#', code: null },
         { id: 'js-study', name: 'JavaScript勉強会', icon: '#', code: null },
         { id: 'tasks', name: '課題・制作物共有', icon: '#', code: null }
@@ -172,7 +172,7 @@
         currentChannel: 'general',
         currentUser: localStorage.getItem('chat_user_name') || 'ユーザー' + Math.floor(Math.random() * 899 + 100),
         userAvatar: localStorage.getItem('chat_user_avatar') || null,
-        unlockedChannels: ['general', 'js-study', 'tasks'], // 認証済みチャンネルリスト
+        unlockedChannels: ['general', 'js-study', 'tasks'],
         messages: {},
         firebaseApp: null,
         db: null,
@@ -362,7 +362,7 @@
             }
         });
 
-        // チャンネル追加（通常 or 鍵付きクローズド）
+        // チャンネル追加
         elements.addChannelBtn.addEventListener('click', () => {
             const channelName = prompt('新しいチャンネル名を入力してください:');
             if (!channelName) return;
@@ -387,7 +387,6 @@
             };
 
             DEFAULT_CHANNELS.push(newChannel);
-            // 作成者は自動的にアンロック状態にする
             state.unlockedChannels.push(id);
 
             renderSidebar();
@@ -403,21 +402,27 @@
     function renderSidebar() {
         elements.channelList.innerHTML = DEFAULT_CHANNELS.map(ch => {
             const isLocked = ch.code && !state.unlockedChannels.includes(ch.id);
+            const isGeneral = ch.id === 'general';
+
             return `
-                <li>
+                <li class="group relative flex items-center">
                     <button onclick="handleChannelClick('${ch.id}', '${ch.name}', '${ch.icon}', '${ch.code || ''}')" 
                         class="w-full text-left px-2 py-1.5 rounded flex items-center gap-2 transition-colors ${state.currentChannel === ch.id ? 'bg-slack-sidebarActive text-white font-medium' : 'text-gray-400 hover:bg-slack-sidebarHover hover:text-gray-200'}">
                         <span class="text-xs ${isLocked ? 'text-yellow-500' : 'text-gray-500'} font-bold">${ch.icon}</span>
-                        <span class="truncate">${ch.name}</span>
-                        ${isLocked ? '<i class="fa-solid fa-lock text-[10px] ml-auto text-yellow-500/80"></i>' : ''}
+                        <span class="truncate pr-5">${ch.name}</span>
+                        ${isLocked ? '<i class="fa-solid fa-lock text-[10px] ml-auto text-yellow-500/80 mr-4"></i>' : ''}
                     </button>
+                    ${!isGeneral ? `
+                        <button onclick="deleteChannel('${ch.id}', '${ch.name}', event)" class="absolute right-1 text-gray-500 hover:text-red-400 opacity-100 sm:opacity-0 group-hover:opacity-100 p-1 transition-opacity" title="チャンネルを削除">
+                            <i class="fa-solid fa-xmark text-xs"></i>
+                        </button>
+                    ` : ''}
                 </li>
             `;
         }).join('');
     }
 
     function handleChannelClick(id, name, icon, code) {
-        // パスコード制限チェック
         if (code && code !== 'null' && code !== '' && !state.unlockedChannels.includes(id)) {
             const inputCode = prompt(`「${name}」は鍵付きチャンネルです。\n参加コードを入力してください:`);
             if (inputCode === code) {
@@ -442,6 +447,30 @@
         if (!elements.sidebar.classList.contains('-translate-x-full')) toggleMobileSidebar();
         if (state.isFirebaseActive) listenToFirebaseMessages();
         else renderMessages();
+    }
+
+    // チャンネル削除処理
+    function deleteChannel(channelId, channelName, event) {
+        event.stopPropagation(); // チャンネル切り替えイベントの連動を防止
+
+        if (confirm(`チャンネル「${channelName}」を削除してもよろしいですか？\n（チャンネル内の全メッセージデータも削除されます）`)) {
+            // 配列から削除
+            DEFAULT_CHANNELS = DEFAULT_CHANNELS.filter(ch => ch.id !== channelId);
+            state.unlockedChannels = state.unlockedChannels.filter(id => id !== channelId);
+
+            // Firebase上のメッセージデータも完全削除
+            if (state.isFirebaseActive && state.db) {
+                state.db.ref(`messages/${channelId}`).remove();
+            }
+
+            // 現在開いているチャンネルが削除された場合、「全体チャット」に戻す
+            if (state.currentChannel === channelId) {
+                const generalCh = DEFAULT_CHANNELS[0];
+                switchChannel(generalCh.id, generalCh.name, generalCh.icon, generalCh.code);
+            } else {
+                renderSidebar();
+            }
+        }
     }
 
     function renderMessages() {
