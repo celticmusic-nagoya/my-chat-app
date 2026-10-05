@@ -60,9 +60,7 @@
 
         <!-- 右: アイコン画像設定 & 名前入力 & 通信設定ボタン -->
         <div class="flex items-center gap-2">
-            <!-- ユーザー設定エリア -->
             <div class="flex items-center gap-1.5 bg-slack-card border border-slack-border rounded-lg px-2 py-1">
-                <!-- アイコン画像プレビュー & 変更ボタン -->
                 <label for="avatar-input" class="cursor-pointer relative group flex-shrink-0" title="アイコン画像を選択">
                     <div id="avatar-preview" class="w-6 h-6 rounded-full bg-slack-sidebarActive text-white flex items-center justify-center font-bold text-xs overflow-hidden border border-gray-600">
                         👤
@@ -73,11 +71,9 @@
                 </label>
                 <input type="file" id="avatar-input" accept="image/*" class="hidden">
 
-                <!-- 表示名入力 -->
                 <input type="text" id="user-name-input" class="bg-transparent text-xs md:text-sm text-gray-200 focus:outline-none w-20 sm:w-28 placeholder-gray-500 font-medium" placeholder="表示名" value="ゲスト">
             </div>
 
-            <!-- 通信設定ボタン -->
             <button id="open-config-btn" class="p-2 text-gray-300 hover:text-white rounded hover:bg-slack-sidebarHover relative" title="Firebase通信設定">
                 <i class="fa-solid fa-gear text-lg"></i>
                 <span id="status-indicator" class="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-yellow-500 border-2 border-slack-sidebar"></span>
@@ -111,7 +107,7 @@
                     <ul id="channel-list" class="space-y-0.5 text-sm"></ul>
                 </div>
             </div>
-            <div class="p-3 border-t border-slack-border/50 text-xs text-gray-500 text-center">Web Training Chat v1.4</div>
+            <div class="p-3 border-t border-slack-border/50 text-xs text-gray-500 text-center">Web Training Chat v1.5</div>
         </aside>
 
         <!-- 2. 中央メインチャットエリア -->
@@ -288,7 +284,6 @@
     }
 
     function setupEventListeners() {
-        // 名前変更イベント
         elements.userNameInput.addEventListener('input', (e) => {
             const val = e.target.value.trim() || '名無し';
             state.currentUser = val;
@@ -296,7 +291,6 @@
             updateAvatarPreview();
         });
 
-        // 画像選択 & 圧縮リサイズ処理 (Base64化)
         elements.avatarInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -307,7 +301,6 @@
                 img.onload = function() {
                     const canvas = document.createElement('canvas');
                     const ctx = canvas.getContext('2d');
-                    // 64x64px に縮小して容量を軽量化
                     canvas.width = 64;
                     canvas.height = 64;
                     ctx.drawImage(img, 0, 0, 64, 64);
@@ -423,7 +416,7 @@
                 escapeHtml(msg.user.charAt(0));
 
             return `
-                <div class="flex gap-3 px-2 py-1.5 hover:bg-slack-sidebarHover/40 rounded">
+                <div class="group relative flex gap-3 px-2 py-1.5 hover:bg-slack-sidebarHover/40 rounded">
                     <div class="w-8 h-8 rounded-full bg-slack-sidebarActive text-white flex items-center justify-center font-bold text-xs shrink-0 overflow-hidden border border-gray-700 select-none">
                         ${avatarHtml}
                     </div>
@@ -435,6 +428,11 @@
                         ${msg.text ? `<p class="text-sm text-gray-200 mt-0.5 whitespace-pre-wrap leading-relaxed">${escapeHtml(msg.text)}</p>` : ''}
                         ${msg.code ? `<pre class="mt-2 p-2 bg-gray-950 text-emerald-400 font-mono text-xs rounded border border-gray-800 overflow-x-auto"><code>${escapeHtml(msg.code)}</code></pre>` : ''}
                     </div>
+                    
+                    <!-- 削除ボタン（メッセージの上にマウスを載せると表示） -->
+                    <button onclick="deleteMessage('${msg.id}')" class="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-gray-400 hover:text-red-400 hover:bg-slack-card rounded absolute right-2 top-2" title="メッセージを削除">
+                        <i class="fa-regular fa-trash-can text-xs"></i>
+                    </button>
                 </div>
             `;
         }).join('');
@@ -465,6 +463,16 @@
         elements.messageInput.value = '';
         elements.codeInput.value = '';
         elements.codeInputContainer.classList.add('hidden');
+    }
+
+    // 単体メッセージ削除関数
+    function deleteMessage(msgId) {
+        if (!msgId) return;
+        if (confirm('このメッセージを削除しますか？')) {
+            if (state.isFirebaseActive && state.db) {
+                state.db.ref(`messages/${state.currentChannel}/${msgId}`).remove();
+            }
+        }
     }
 
     function escapeHtml(str) {
