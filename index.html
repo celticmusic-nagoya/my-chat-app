@@ -58,12 +58,23 @@
             <span id="demo-badge" class="hidden sm:inline-block text-[10px] bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-2 py-0.5 rounded-full font-mono">デモモード</span>
         </div>
 
-        <!-- 右: 名前入力インプット & 通信設定ボタン -->
+        <!-- 右: アイコン画像設定 & 名前入力 & 通信設定ボタン -->
         <div class="flex items-center gap-2">
-            <!-- 自由入力できる名前フォーム -->
+            <!-- ユーザー設定エリア -->
             <div class="flex items-center gap-1.5 bg-slack-card border border-slack-border rounded-lg px-2 py-1">
-                <i class="fa-solid fa-user-pen text-slack-sidebarActive text-xs"></i>
-                <input type="text" id="user-name-input" class="bg-transparent text-xs md:text-sm text-gray-200 focus:outline-none w-24 sm:w-32 placeholder-gray-500 font-medium" placeholder="表示名を入力" value="ゲスト">
+                <!-- アイコン画像プレビュー & 変更ボタン -->
+                <label for="avatar-input" class="cursor-pointer relative group flex-shrink-0" title="アイコン画像を選択">
+                    <div id="avatar-preview" class="w-6 h-6 rounded-full bg-slack-sidebarActive text-white flex items-center justify-center font-bold text-xs overflow-hidden border border-gray-600">
+                        👤
+                    </div>
+                    <div class="absolute inset-0 bg-black/50 rounded-full opacity-0 group-hover:opacity-100 flex items-center justify-center text-[10px] text-white transition-opacity">
+                        <i class="fa-solid fa-camera"></i>
+                    </div>
+                </label>
+                <input type="file" id="avatar-input" accept="image/*" class="hidden">
+
+                <!-- 表示名入力 -->
+                <input type="text" id="user-name-input" class="bg-transparent text-xs md:text-sm text-gray-200 focus:outline-none w-20 sm:w-28 placeholder-gray-500 font-medium" placeholder="表示名" value="ゲスト">
             </div>
 
             <!-- 通信設定ボタン -->
@@ -100,7 +111,7 @@
                     <ul id="channel-list" class="space-y-0.5 text-sm"></ul>
                 </div>
             </div>
-            <div class="p-3 border-t border-slack-border/50 text-xs text-gray-500 text-center">Web Training Chat v1.3</div>
+            <div class="p-3 border-t border-slack-border/50 text-xs text-gray-500 text-center">Web Training Chat v1.4</div>
         </aside>
 
         <!-- 2. 中央メインチャットエリア -->
@@ -164,6 +175,7 @@
     let state = {
         currentChannel: 'general',
         currentUser: localStorage.getItem('chat_user_name') || 'ユーザー' + Math.floor(Math.random() * 899 + 100),
+        userAvatar: localStorage.getItem('chat_user_avatar') || null,
         messages: {},
         firebaseApp: null,
         db: null,
@@ -180,6 +192,8 @@
         toggleCodeBtn: document.getElementById('toggle-code-btn'),
         closeCodeBtn: document.getElementById('close-code-btn'),
         userNameInput: document.getElementById('user-name-input'),
+        avatarInput: document.getElementById('avatar-input'),
+        avatarPreview: document.getElementById('avatar-preview'),
         currentChannelTitle: document.getElementById('current-channel-title'),
         currentChannelIcon: document.getElementById('current-channel-icon'),
         sidebar: document.getElementById('sidebar'),
@@ -200,9 +214,18 @@
 
     function init() {
         elements.userNameInput.value = state.currentUser;
+        updateAvatarPreview();
         setupEventListeners();
         renderSidebar();
         initFirebaseFromStorage();
+    }
+
+    function updateAvatarPreview() {
+        if (state.userAvatar) {
+            elements.avatarPreview.innerHTML = `<img src="${state.userAvatar}" class="w-full h-full object-cover">`;
+        } else {
+            elements.avatarPreview.textContent = state.currentUser.charAt(0);
+        }
     }
 
     function initFirebaseFromStorage() {
@@ -265,11 +288,38 @@
     }
 
     function setupEventListeners() {
-        // 名前の変更入力イベント（自動保存）
+        // 名前変更イベント
         elements.userNameInput.addEventListener('input', (e) => {
             const val = e.target.value.trim() || '名無し';
             state.currentUser = val;
             localStorage.setItem('chat_user_name', val);
+            updateAvatarPreview();
+        });
+
+        // 画像選択 & 圧縮リサイズ処理 (Base64化)
+        elements.avatarInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    // 64x64px に縮小して容量を軽量化
+                    canvas.width = 64;
+                    canvas.height = 64;
+                    ctx.drawImage(img, 0, 0, 64, 64);
+                    const base64Url = canvas.toDataURL('image/jpeg', 0.8);
+                    
+                    state.userAvatar = base64Url;
+                    localStorage.setItem('chat_user_avatar', base64Url);
+                    updateAvatarPreview();
+                };
+                img.src = evt.target.result;
+            };
+            reader.readAsDataURL(file);
         });
 
         elements.toggleCodeBtn.addEventListener('click', () => {
@@ -367,21 +417,27 @@
             return;
         }
 
-        elements.messagesContainer.innerHTML = currentMsgs.map(msg => `
-            <div class="flex gap-3 px-2 py-1.5 hover:bg-slack-sidebarHover/40 rounded">
-                <div class="w-8 h-8 rounded bg-slack-sidebarActive text-white flex items-center justify-center font-bold text-xs shrink-0 select-none">
-                    ${escapeHtml(msg.user.charAt(0))}
-                </div>
-                <div class="flex-1 min-w-0">
-                    <div class="flex items-baseline gap-2">
-                        <span class="font-bold text-white text-sm truncate">${escapeHtml(msg.user)}</span>
-                        <span class="text-[10px] text-gray-500">${msg.timestamp || ''}</span>
+        elements.messagesContainer.innerHTML = currentMsgs.map(msg => {
+            const avatarHtml = msg.avatar ? 
+                `<img src="${msg.avatar}" class="w-full h-full object-cover">` : 
+                escapeHtml(msg.user.charAt(0));
+
+            return `
+                <div class="flex gap-3 px-2 py-1.5 hover:bg-slack-sidebarHover/40 rounded">
+                    <div class="w-8 h-8 rounded-full bg-slack-sidebarActive text-white flex items-center justify-center font-bold text-xs shrink-0 overflow-hidden border border-gray-700 select-none">
+                        ${avatarHtml}
                     </div>
-                    ${msg.text ? `<p class="text-sm text-gray-200 mt-0.5 whitespace-pre-wrap">${escapeHtml(msg.text)}</p>` : ''}
-                    ${msg.code ? `<pre class="mt-2 p-2 bg-gray-950 text-emerald-400 font-mono text-xs rounded border border-gray-800 overflow-x-auto"><code>${escapeHtml(msg.code)}</code></pre>` : ''}
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-baseline gap-2">
+                            <span class="font-bold text-white text-sm truncate">${escapeHtml(msg.user)}</span>
+                            <span class="text-[10px] text-gray-500">${msg.timestamp || ''}</span>
+                        </div>
+                        ${msg.text ? `<p class="text-sm text-gray-200 mt-0.5 whitespace-pre-wrap leading-relaxed">${escapeHtml(msg.text)}</p>` : ''}
+                        ${msg.code ? `<pre class="mt-2 p-2 bg-gray-950 text-emerald-400 font-mono text-xs rounded border border-gray-800 overflow-x-auto"><code>${escapeHtml(msg.code)}</code></pre>` : ''}
+                    </div>
                 </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
 
         elements.messagesContainer.scrollTop = elements.messagesContainer.scrollHeight;
     }
@@ -396,6 +452,7 @@
 
         const newMsg = {
             user: state.currentUser,
+            avatar: state.userAvatar || null,
             text: text,
             code: code || null,
             timestamp: timeStr
