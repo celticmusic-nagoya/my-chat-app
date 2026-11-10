@@ -19,7 +19,7 @@
     if (artifact.kind === 'code') {
       return '<div class="mt-3 max-w-xl overflow-hidden rounded-lg border border-slate-600 bg-[#111827]">'+
         '<div class="flex items-center justify-between border-b border-slate-700 px-3 py-2 text-xs text-slate-300"><span>〈/〉 responsive.css</span><span>CSS・サンプル</span></div>'+
-        '<pre class="overflow-x-auto p-3 text-xs leading-5 text-emerald-300"><code>@media (max-width: 640px) {\n  .hero { padding: 56px 20px; }\n  .hero h1 { font-size: 2rem; }\n  .nav-links { flex-wrap: wrap; }\n}</code></pre></div>';
+        '<pre class="overflow-x-auto p-3 text-xs leading-5 text-emerald-300"><code>@media (max-width: 640px) {&#10;  .hero { padding: 56px 20px; }&#10;  .hero h1 { font-size: 2rem; }&#10;  .nav-links { flex-wrap: wrap; }&#10;}</code></pre></div>';
     }
     const mobile=artifact.kind==='mobile';
     const color=artifact.updated?'#e4eee7':'#e5e9f0';
